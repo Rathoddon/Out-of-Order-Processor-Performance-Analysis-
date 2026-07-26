@@ -1,0 +1,82 @@
+# Design-Space Exploration of Out-of-Order Core Microarchitecture
+
+Microarchitectural performance analysis using **gem5** — exploring how Reorder
+Buffer (ROB) size and issue width affect IPC across compute-, memory-, and
+branch-heavy workloads, with bottleneck analysis derived from gem5's internal
+statistics.
+
+## Summary
+
+- Built a custom gem5 SE-mode configuration exposing ROB size and issue width
+  as sweep parameters (not available in gem5's default example scripts)
+- Wrote 3 workloads targeting distinct performance-limiting behaviors:
+  compute-bound (matrix multiply), memory-bound (pointer-chasing linked list),
+  and branch-bound (recursive quicksort)
+- Ran a 36-configuration design-space sweep (4 ROB sizes x 3 issue widths x 3
+  workloads) on gem5's `X86O3CPU` out-of-order model
+- Diagnosed *why* IPC plateaus or behaves non-monotonically using gem5's
+  ROB-full events, branch-squash counts, and memory-order-violation stats —
+  not just IPC curves alone
+
+## Key findings
+
+| Workload | Result |
+|---|---|
+| Compute-heavy | Issue width dominates; ROB size stops mattering once "large enough" (~1.5% IPC change from ROB 32->192, vs. 71% from issue width 1->4) |
+| Memory-heavy | IPC nearly flat (~0.091-0.092) across the entire grid — the pointer-chasing dependency chain has no independent memory-level parallelism (MLP) for OoO hardware to exploit |
+| Branch-heavy | Non-monotonic: IPC peaks at ROB=64 then *drops* at ROB=128/192, because a larger ROB lets the core speculate further past unresolved branches, increasing the cost of each misprediction squash |
+
+![IPC vs ROB size across workloads](report_assets/ipc_vs_rob.png)
+
+## Repository structure
+
+```
+.
+|-- rob_iw_config.py        # Custom gem5 SE-mode config (ROB / issue-width sweep parameters)
+|-- run_sweep.sh             # Automates the 12-config sweep per workload
+|-- analyze_sweep.py         # Parses stats.txt -> IPC plots + bottleneck summary CSV
+|-- workloads/
+|   |-- compute_heavy.c
+|   |-- memory_heavy.c
+|   `-- branch_heavy.c
+|-- report_assets/
+|   |-- ipc_vs_rob.png
+|   `-- bottleneck_summary.csv
+`-- OoO_DSE_Report.docx      # Full write-up
+```
+
+## Methodology
+
+- **Simulator:** gem5 v25.1.0.1, X86 ISA, Syscall Emulation (SE) mode
+- **CPU models:** `X86MinorCPU` (in-order baseline) and `X86O3CPU` (out-of-order, swept)
+- **Swept parameters:** ROB size (32/64/128/192), issue width (1/2/4), matched
+  across fetch/decode/rename/dispatch/commit stages
+- **Metrics extracted per run:** IPC, `ROBFullEvents`, branch squash count,
+  memory-order violations, fetch stall cycles
+
+## Running it yourself
+
+```bash
+# Build workloads
+gcc -static -O0 workloads/compute_heavy.c -o compute_heavy.bin
+gcc -static -O0 workloads/memory_heavy.c -o memory_heavy.bin
+gcc -static -O0 workloads/branch_heavy.c -o branch_heavy.bin
+
+# Run the full sweep for each workload
+./run_sweep.sh compute_heavy.bin compute
+./run_sweep.sh memory_heavy.bin memory
+./run_sweep.sh branch_heavy.bin branch
+
+# Generate plots + bottleneck summary
+python3 analyze_sweep.py
+```
+
+## Limitations / future work
+
+- Power and area were not modeled with McPAT; ROB utilization is used as a
+  structural proxy rather than a measured power/area figure
+- One benchmark per workload category; a broader benchmark suite (e.g. a
+  SPEC CPU2017 subset) would strengthen generality
+- Future extension: integrate McPAT, sweep cache configuration, test
+  additional branch predictors against the ROB/misprediction-penalty tradeoff
+  found here
