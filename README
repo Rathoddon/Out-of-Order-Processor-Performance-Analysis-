@@ -42,7 +42,6 @@ statistics.
 |-- report_assets/
 |   |-- ipc_vs_rob.png
 |   `-- bottleneck_summary.csv
-`-- OoO_DSE_Report.docx      # Full write-up
 ```
 
 ## Methodology
